@@ -1,104 +1,68 @@
-import asyncio
+import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import (Application, CallbackQueryHandler, CommandHandler,
+                          ContextTypes, MessageHandler, filters)
 import gspread
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-import json
-import os
+from oauth2client.service_account import ServiceAccountCredentials
+import datetime
+import matplotlib.pyplot as plt
+import io
 
-# =================== KONFIG ===================
-SCOPES = ['https://www.googleapis.com/auth/drive']
-TEMPLATE_SHEET_ID = '1HX5qLaN6Ush86qg4g_bMOBRHKPtCuUMTzgLLlE6ho'
-ADMIN_ID = 383820856
-GOOGLE_FORM_LINK = 'https://docs.google.com/forms/d/e/1FAIpQLScovQbSOQrbJqeD-vcUGDH6vk5My-JeoM3qkgfcAK6LOTbegA/viewform'
+# Konfigurasi Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# =================== AUTENTIKASI ===================
-creds = service_account.Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-gc = gspread.authorize(creds)
-drive_service = build('drive', 'v3', credentials=creds)
+# Konfigurasi Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+client = gspread.authorize(creds)
 
-# =================== MULTI-USER ===================
-def save_user_sheet_id(user_id, sheet_id):
-    data = {}
-    if os.path.exists("user_data.json"):
-        with open("user_data.json", "r") as f:
-            data = json.load(f)
-    data[str(user_id)] = sheet_id
-    with open("user_data.json", "w") as f:
-        json.dump(data, f)
+sheet_transaksi = client.open("CATATAN KEUANGAN").worksheet("Transaksi")
+sheet_rekening = client.open("CATATAN KEUANGAN").worksheet("Rekening")
+sheet_kategori = client.open("CATATAN KEUANGAN").worksheet("Kategori")
 
-def get_user_sheet_id(user_id):
-    if os.path.exists("user_data.json"):
-        with open("user_data.json", "r") as f:
-            data = json.load(f)
-        return data.get(str(user_id))
-    return None
-
-def duplicate_template_for_user(user_id):
-    new_title = f"CATATAN_KEUANGAN_{user_id}"
-    copied_file = drive_service.files().copy(
-        fileId=TEMPLATE_SHEET_ID,
-        body={"name": new_title}
-    ).execute()
-    return copied_file["id"]
-
-# =================== HANDLER ===================
+# ===================== HANDLER =======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
-    sheet_id = get_user_sheet_id(user_id)
-
-    if not sheet_id:
-        await update.message.reply_text(
-            f"🚫 Kamu belum terdaftar.\n\nSilakan isi formulir ini untuk aktivasi:\n{GOOGLE_FORM_LINK}"
-        )
-        return
-
     keyboard = [
-        [InlineKeyboardButton("➕ Catat Transaksi", callback_data="catat")],
-        [InlineKeyboardButton("📊 Rekap", callback_data="rekap"), InlineKeyboardButton("📅 Laporan", callback_data="laporan")],
-        [InlineKeyboardButton("💼 Rekening", callback_data="rekening"), InlineKeyboardButton("📂 Kategori", callback_data="kategori")],
-        [InlineKeyboardButton("📤 Export", callback_data="export"), InlineKeyboardButton("🧠 Saldo", callback_data="saldo")],
-        [InlineKeyboardButton("🔍 Cari", callback_data="cari"), InlineKeyboardButton("🗑️ Hapus", callback_data="hapus")],
-        [InlineKeyboardButton("⏰ Pengingat (OFF)", callback_data="pengingat")],
-        [InlineKeyboardButton("📈 Grafik", callback_data="grafik")],
+        [InlineKeyboardButton("Catat Transaksi", callback_data='catat')],
+        [InlineKeyboardButton("Rekap", callback_data='rekap')],
+        [InlineKeyboardButton("Laporan", callback_data='laporan')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Menu Utama:", reply_markup=reply_markup)
+    await update.message.reply_text('Halo! Ini bot pencatat keuangan kamu 📝', reply_markup=reply_markup)
 
-async def idku(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await update.message.reply_text(f"🆔 ID Telegram kamu: `{user_id}`", parse_mode="Markdown")
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-async def aktivasi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("🚫 Kamu bukan admin.")
-        return
+    if query.data == 'catat':
+        await query.edit_message_text("Ketik format transaksi: jumlah, masuk/keluar, kategori, rekening, catatan")
+    elif query.data == 'rekap':
+        await query.edit_message_text("Rekap belum tersedia.")
+    elif query.data == 'laporan':
+        await query.edit_message_text("Laporan belum tersedia.")
 
-    if len(context.args) != 1:
-        await update.message.reply_text("Format: /aktivasi <user_id>")
-        return
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    try:
+        jumlah, jenis, kategori, rekening, catatan = [x.strip() for x in text.split(',')]
+        tanggal = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sheet_transaksi.append_row([tanggal, jumlah, jenis, kategori, rekening, catatan])
+        await update.message.reply_text("✅ Transaksi dicatat!")
+    except Exception as e:
+        logger.error(f"Error parsing message: {e}")
+        await update.message.reply_text("Format salah. Gunakan: jumlah, masuk/keluar, kategori, rekening, catatan")
 
-    target_id = int(context.args[0])
-    if get_user_sheet_id(target_id):
-        await update.message.reply_text("✅ User ini sudah aktif.")
-        return
-
-    sheet_id = duplicate_template_for_user(target_id)
-    save_user_sheet_id(target_id, sheet_id)
-    await update.message.reply_text(
-        f"✅ User {target_id} sudah diaktifkan.\nSheet: https://docs.google.com/spreadsheets/d/{sheet_id}"
-    )
-
-# =================== SETUP BOT ===================
+# ===================== MAIN =======================
 async def main():
     app = Application.builder().token("7570088814:AAFcLOdNuGGNurkVfh55BqZUbD8NsH2b-ww").build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("idku", idku))
-    app.add_handler(CommandHandler("aktivasi", aktivasi))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
     await app.run_polling()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
+    import asyncio
     asyncio.run(main())
