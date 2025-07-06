@@ -1,35 +1,32 @@
-
-# utils.py - Fungsi tambahan untuk CatatUangBot Pro
-# Termasuk: Format Rupiah, Filter Laporan, dll
-
 import datetime
 
-def format_rp(x):
+def format_rp(jumlah):
     try:
-        return f"Rp{x:,.0f}".replace(",", ".")
+        return f"Rp{int(jumlah):,}".replace(",", ".")
     except:
         return "Rp0"
 
-def filter_transaksi_by_date(data, rentang):
+def filter_transaksi_by_date(data, rentang="hari"):
     now = datetime.datetime.now()
-
-    if rentang == "hari":
-        batas = now.date()
-        hasil = [r for r in data if datetime.datetime.strptime(r[0], '%Y-%m-%d').date() == batas]
-    elif rentang == "minggu":
-        batas = now - datetime.timedelta(days=now.weekday())
-        hasil = [r for r in data if datetime.datetime.strptime(r[0], '%Y-%m-%d').date() >= batas.date()]
-    elif rentang == "bulan":
-        hasil = [r for r in data if datetime.datetime.strptime(r[0], '%Y-%m-%d').month == now.month]
-    else:
-        hasil = data
-
+    hasil = []
+    for row in data:
+        try:
+            tgl = datetime.datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+        except:
+            try:
+                tgl = datetime.datetime.strptime(row[0], "%Y-%m-%d")
+            except:
+                continue
+        if rentang == "hari" and tgl.date() == now.date():
+            hasil.append(row)
+        elif rentang == "minggu" and now - datetime.timedelta(days=7) <= tgl <= now:
+            hasil.append(row)
+        elif rentang == "bulan" and tgl.year == now.year and tgl.month == now.month:
+            hasil.append(row)
     return hasil
 
 def rekapkan(data):
-    try:
-        masuk = sum(int(r[1]) for r in data if r[2] == "Masuk")
-        keluar = sum(int(r[1]) for r in data if r[2] == "Keluar")
-        return masuk, keluar, masuk - keluar
-    except:
-        return 0, 0, 0
+    masuk = sum(int(row[1]) for row in data if row[2].lower() == "masuk")
+    keluar = sum(int(row[1]) for row in data if row[2].lower() == "keluar")
+    saldo = masuk - keluar
+    return masuk, keluar, saldo
